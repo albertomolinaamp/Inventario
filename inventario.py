@@ -119,3 +119,4 @@ if not items.empty:
 else:
     st.info("No hay objetos en este contenedor.")
 
+
