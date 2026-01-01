@@ -6,7 +6,7 @@ import base64
 
 # --- CONFIGURACIÓN DE TUS ENLACES ---
 # La URL de tu Google Apps Script (el puente para Drive)
-SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxDpBeOxVNnrP5vgwaEDgY7VXJEaoqX3tStTxlBukgzNE2ltfyo5kYWvqoIL1qCFn5g/exec"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzABmkQBkLv0ZxtqvoKXhabiGYbvJyq8SbYRE9MsROdE5_zZin4UVYZ5sKw5KxXgfMo/exec"
 # La URL de tu Google Sheet (Asegúrate de que sea EDITABLE por cualquiera con el link)
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dFBk0k1X_MjAqIeQEbHi77OdeFP2_9bCktzg3gR9OZ0/edit?usp=sharing"
 
@@ -118,3 +118,4 @@ if not items.empty:
                     st.rerun()
 else:
     st.info("No hay objetos en este contenedor.")
+
