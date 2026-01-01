@@ -1,63 +1,120 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+import requests
+import base64
 
-# Configuración de la página
-st.set_page_config(page_title="Mi Inventario Pro", layout="centered")
+# --- CONFIGURACIÓN DE TUS ENLACES ---
+# La URL de tu Google Apps Script (el puente para Drive)
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxDpBeOxVNnrP5vgwaEDgY7VXJEaoqX3tStTxlBukgzNE2ltfyo5kYWvqoIL1qCFn5g/exec"
+# La URL de tu Google Sheet (Asegúrate de que sea EDITABLE por cualquiera con el link)
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1dFBk0k1X_MjAqIeQEbHi77OdeFP2_9bCktzg3gR9OZ0/edit?usp=sharing"
 
-# 1. SIMULACIÓN DE BASE DE DATOS (En un caso real, usarías un CSV o SQL)
-if 'db' not in st.session_state:
-    st.session_state.db = pd.DataFrame(columns=[
-        "ID", "Nombre", "Ubicación", "Contenedor", "Estado", "Fecha"
-    ])
+# Configuración de página móvil
+st.set_page_config(page_title="Inventario Pro", layout="centered")
 
-st.title("📦 Gestor de Inventario")
+# --- CONEXIÓN CON TU EXCEL ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- VENTANA 1: SELECCIÓN DE UBICACIÓN ---
+def cargar_datos():
+    # ttl=0 obliga a la app a no usar caché y leer los cambios reales del Excel cada vez
+    return conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
+
+# Cargamos los datos actuales
+try:
+    df = cargar_datos()
+except Exception as e:
+    st.error(f"Error al conectar con Google Sheets: {e}")
+    st.stop()
+
+st.title("📦 Mi Inventario Organizado")
+
+# --- VENTANA 1: JERARQUÍA DE UBICACIÓN ---
 st.subheader("📍 ¿Dónde estamos?")
-ubicaciones = ["Nave A", "Trastero", "Garaje", "Taller"]
-ubi_sel = st.selectbox("Selecciona Ubicación", ubicaciones)
+col1, col2, col3 = st.columns(3)
 
-# --- VENTANA 2: SELECCIÓN DE CONTENEDOR (Estante/Caja) ---
-# Aquí puedes añadir subniveles fácilmente
-contenedores = ["Estantería 1", "Estantería 2", "Caja Herramientas", "Balda 3"]
-cont_sel = st.selectbox("Selecciona el Contenedor/Caja", contenedores)
+with col1:
+    ubi_sel = st.selectbox("Ubicación", ["Nave", "Trastero", "Garaje"])
+
+with col2:
+    mueble_sel = st.selectbox("Mueble/Estante", ["Estantería A", "Armario 1", "Suelo"])
+
+with col3:
+    cont_sel = st.selectbox("Contenedor/Caja", ["Caja 1", "Caja 2", "Sin Caja"])
 
 st.divider()
 
-# --- VENTANA 3: CARGA RÁPIDA (Solo nombre y foto) ---
-with st.expander(f"➕ Añadir objeto a {cont_sel}", expanded=False):
-    with st.form("nuevo_objeto"):
+# --- VENTANA 2: CARGA RÁPIDA (Solo nombre y foto) ---
+# Hereda automáticamente la ubicación y contenedor seleccionados arriba
+with st.expander(f"➕ Añadir objeto a: {cont_sel}", expanded=False):
+    with st.form("nuevo_registro", clear_on_submit=True):
         nombre = st.text_input("Nombre del objeto")
-        foto = st.camera_input("Tomar foto") # Abre la cámara en el móvil
+        foto_file = st.camera_input("Hacer Foto")
         
-        submitted = st.form_submit_button("Guardar en este lugar")
-        
-        if submitted and nombre:
-            nuevo_registro = {
-                "ID": len(st.session_state.db) + 1,
-                "Nombre": nombre,
-                "Ubicación": ubi_sel,
-                "Contenedor": cont_sel,
-                "Estado": "Guardado",
-                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M")
-            }
-            st.session_state.db = pd.concat([st.session_state.db, pd.DataFrame([nuevo_registro])], ignore_index=True)
-            st.success(f"✅ {nombre} guardado en {cont_sel}")
+        btn_guardar = st.form_submit_button("Guardar en Drive y Excel")
 
-# --- VENTANA 4: LISTADO FILTRADO ---
-st.subheader(f"🔍 Objetos en {cont_sel}")
-df_filtrado = st.session_state.db[
-    (st.session_state.db['Ubicación'] == ubi_sel) & 
-    (st.session_state.db['Contenedor'] == cont_sel)
-]
+        if btn_guardar and nombre and foto_file:
+            with st.spinner("Subiendo foto a Drive..."):
+                try:
+                    # Convertir imagen a base64 para enviarla al script de Apps Script
+                    img_base64 = base64.b64encode(foto_file.getvalue()).decode()
+                    
+                    # Enviar al Script de Google para guardar en Drive
+                    res = requests.post(SCRIPT_URL, json={
+                        "base64": img_base64,
+                        "type": foto_file.type,
+                        "name": f"{nombre}.jpg"
+                    })
+                    
+                    if res.status_code == 200:
+                        url_drive = res.json().get("url")
+                        
+                        # Crear la nueva fila (Asegúrate de que las columnas coincidan con el Excel)
+                        nueva_fila = pd.DataFrame([{
+                            "ID": len(df) + 1,
+                            "Nombre": nombre,
+                            "Ubicación": ubi_sel,
+                            "Mueble": mueble_sel,
+                            "Contenedor": cont_sel,
+                            "Estado": "Guardado",
+                            "Foto_URL": url_drive
+                        }])
+                        
+                        # Guardar en el Google Sheet
+                        df_final = pd.concat([df, nueva_fila], ignore_index=True)
+                        conn.update(spreadsheet=SPREADSHEET_URL, data=df_final)
+                        
+                        st.success(f"✅ {nombre} guardado correctamente.")
+                        st.rerun()
+                    else:
+                        st.error("Error en el Script de Drive. Revisa los permisos.")
+                except Exception as e:
+                    st.error(f"Error durante el proceso: {e}")
 
-if not df_filtrado.empty:
-    for index, row in df_filtrado.iterrows():
-        col1, col2 = st.columns([3, 1])
-        col1.write(f"**{row['Nombre']}**")
-        if col2.button("Sacar", key=f"btn_{row['ID']}"):
-            st.info(f"Has sacado: {row['Nombre']}")
-            # Aquí iría la lógica para cambiar el estado a 'Fuera'
+# --- VENTANA 3: LISTADO DEL CONTENEDOR SELECCIONADO ---
+st.subheader(f"🔍 Contenido en {cont_sel}")
+
+# Filtramos los objetos que coinciden con nuestra selección de arriba
+# Asegúrate de que los nombres de columna coincidan exactamente con tu Excel
+items = df[(df["Ubicación"] == ubi_sel) & (df["Contenedor"] == cont_sel)]
+
+if not items.empty:
+    for _, row in items.iterrows():
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c1:
+                # Muestra la imagen directamente desde el link de Drive generado por el Script
+                if pd.notnull(row["Foto_URL"]):
+                    st.image(row["Foto_URL"], width=100)
+            with c2:
+                st.write(f"**{row['Nombre']}**")
+                st.caption(f"Estado: {row['Estado']}")
+            with c3:
+                # Acción para sacar el objeto
+                if st.button("Sacar", key=f"btn_{row['ID']}"):
+                    df.loc[df["ID"] == row["ID"], "Estado"] = "Fuera"
+                    conn.update(spreadsheet=SPREADSHEET_URL, data=df)
+                    st.toast(f"{row['Nombre']} retirado.")
+                    st.rerun()
 else:
-    st.write("No hay objetos en este contenedor.")
+    st.info("No hay objetos en este contenedor.")
